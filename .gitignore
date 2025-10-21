@@ -1,0 +1,12 @@
+# uv virtualenvs and caches
+.venv/
+.uv/
+uv.lock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# marimo artifacts
+.marimo/

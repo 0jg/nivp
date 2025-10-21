@@ -1,0 +1,13 @@
+[project]
+name = "neural-ivp"
+version = "0.1.0"
+description = "Implementation of the neural IVP, as introduced in PhysRevE.111.055302."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "marimo>=0.17.0",
+    "matplotlib>=3.10.7",
+    "numpy>=2.3.4",
+    "torch>=2.9.0",
+    "tqdm>=4.67.1",
+]
