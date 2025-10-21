@@ -33,9 +33,9 @@ def _():
         DATA_TYPE,
         SimpleMLP,
         CoupledOptimiser,
-        gradient,
         expected_path_tensor,
         ensure_run_dirs,
+        second_order_dynamics,
     )
     from systems import HarmonicOscillator
     return (
@@ -45,9 +45,9 @@ def _():
         SimpleMLP,
         ensure_run_dirs,
         expected_path_tensor,
-        gradient,
         json,
         os,
+        second_order_dynamics,
     )
 
 
@@ -89,27 +89,29 @@ def dataset(
     t_dataset = torch.utils.data.TensorDataset(t)
     domain = torch.utils.data.DataLoader(dataset=t_dataset, batch_size=params["batch_size"], shuffle=True)
 
-    x0 = torch.tensor([params["x0"]], dtype=DATA_TYPE)
-    v0 = torch.tensor([params["v0"]], dtype=DATA_TYPE)
+    init_position = torch.tensor([params["x0"]], dtype=DATA_TYPE)
+    init_velocity = torch.tensor([params["v0"]], dtype=DATA_TYPE)
 
     system = HarmonicOscillator()
-    expected = expected_path_tensor(system, x0, v0, T_MIN, T_MAX, DT)
-    return domain, expected, t
+    expected = expected_path_tensor(system, init_position, init_velocity, T_MIN, T_MAX, DT)
+    return domain, expected, init_position, init_velocity, system, t
 
 
 @app.cell
 def train_loop(
     CoupledOptimiser,
-    DATA_TYPE,
     SimpleMLP,
     domain,
     ensure_run_dirs,
     expected,
-    gradient,
+    init_position,
+    init_velocity,
     json,
     os,
     params,
     plt,
+    second_order_dynamics,
+    system,
     t,
     torch,
     tqdm,
@@ -123,45 +125,43 @@ def train_loop(
         EPOCHS = params["epochs"]
         loss_hist = []
         for epoch in tqdm(range(EPOCHS)):
-            domain_list = list(domain)
-            for t_batch_tuple in domain_list:
-                t_batch = t_batch_tuple[0]
-                px = model_x(t_batch).requires_grad_(True)
-
-                vx = gradient(px, t_batch, 1)
-
-                # ODE residual: d²x/dt² + x = 0
-                ode_x = gradient(px, t_batch, 2) + px
+            for (t_batch,) in domain:
+                q_pred = model_x(t_batch).requires_grad_(True)
+                velocities, _, residuals = second_order_dynamics(system, q_pred, t_batch)
+                target_pos = init_position.to(q_pred).unsqueeze(0)
+                target_vel = init_velocity.to(q_pred).unsqueeze(0)
 
                 l2 = torch.nn.MSELoss()
-                pos_x = l2(torch.tensor(params["x0"], dtype=DATA_TYPE).unsqueeze(0), px[:,0,:])
-                vel_x = l2(torch.tensor(params["v0"], dtype=DATA_TYPE).unsqueeze(0).unsqueeze(0), vx[0][0].unsqueeze(0))
+                pos_loss = l2(q_pred[:, 0, :], target_pos)
+                vel_loss = l2(velocities[:, 0, :], target_vel)
+                ode_loss = l2(residuals, torch.zeros_like(residuals))
 
-                ode_loss_x = l2(ode_x, torch.zeros_like(px))
-
-                overall_x = params["ODE_REGULARISER"]*ode_loss_x + params["POSITION_REGULARISER"]*pos_x + params["VELOCITY_REGULARISER"]*vel_x
-                overall = overall_x
-                loss_hist.append(float(overall.detach().cpu().numpy()))
+                overall = (
+                    params["ODE_REGULARISER"] * ode_loss
+                    + params["POSITION_REGULARISER"] * pos_loss
+                    + params["VELOCITY_REGULARISER"] * vel_loss
+                )
+                loss_hist.append(overall.item())
 
                 optimiser.zero_grad()
-                overall.backward(retain_graph=True)
+                overall.backward()
                 optimiser.step()
 
             if (epoch % 500 == 0) or (epoch == EPOCHS-1):
-                fig = plt.figure(figsize=(10, 6), dpi=150)
+                fig = plt.figure(figsize=(6, 4), dpi=150)
                 fig.patch.set_facecolor('white')
 
                 tt = t[0,:,0].detach().cpu().numpy()
-                px_np = px.detach().cpu().numpy()[0,:,0]
-                expected_x = expected.detach().cpu().numpy()[0,0,0,:]
+                px_np = q_pred.detach().cpu().numpy()[0,:,0]
+                expected_x = expected.detach().cpu().numpy()[0,:,0]
 
                 # Create plot
                 ax = fig.add_subplot(111)
                 ax.plot(tt, px_np, color='black', linewidth=2, label='Neural IVP')
                 ax.plot(tt, expected_x, color='lightgrey', linewidth=2.5, label='RK4', zorder=-1)
-                ax.set_xlabel(r'$t$', fontsize=12)
-                ax.set_ylabel(r'$x(t)$', fontsize=12)
-                ax.legend(loc='upper right', frameon=False, fontsize=11)
+                ax.set_xlabel(r'$t$')
+                ax.set_ylabel(r'$x(t)$')
+                ax.legend(loc='upper right', frameon=False)
                 ax.spines['top'].set_visible(False)
                 ax.spines['right'].set_visible(False)
                 ax.tick_params(direction='in', which='both', left=True, bottom=True)
@@ -170,19 +170,19 @@ def train_loop(
                 plt.show()
 
                 # Loss history as separate plot
-                fig_loss = plt.figure(figsize=(8, 5), dpi=150)
+                fig_loss = plt.figure(figsize=(6, 4), dpi=150)
                 fig_loss.patch.set_facecolor('white')
                 ax_loss = fig_loss.add_subplot(111)
                 ax_loss.semilogy(loss_hist, linewidth=2, color='black')
-                ax_loss.set_xlabel(r'Batch', fontsize=12)
-                ax_loss.set_ylabel(r'Loss', fontsize=12)
+                ax_loss.set_xlabel(r'Batch')
+                ax_loss.set_ylabel(r'Loss')
                 ax_loss.spines['top'].set_visible(False)
                 ax_loss.spines['right'].set_visible(False)
                 ax_loss.tick_params(direction='in', which='both', left=True, bottom=True)
                 ax_loss.tick_params(labelbottom=True, labelleft=True)
                 plt.show()
 
-        return model_x, loss_hist, px
+        return model_x, loss_hist, q_pred
 
     model_x, loss_hist, px_final = train()
 
@@ -201,17 +201,17 @@ def train_loop(
     # Generate and save final figures
     tt = t[0,:,0].detach().cpu().numpy()
     px_np = px_final.detach().cpu().numpy()[0,:,0]
-    expected_x = expected.detach().cpu().numpy()[0,0,0,:]
+    expected_x = expected.detach().cpu().numpy()[0,:,0]
 
     # Save trajectory figure
-    fig = plt.figure(figsize=(10, 6), dpi=150)
+    fig = plt.figure(figsize=(6, 4), dpi=150)
     fig.patch.set_facecolor('white')
     ax = fig.add_subplot(111)
     ax.plot(tt, px_np, color='black', linewidth=2, label='Neural IVP')
     ax.plot(tt, expected_x, color='lightgrey', linewidth=2.5, label='RK4', zorder=-1)
-    ax.set_xlabel(r'$t$', fontsize=12)
-    ax.set_ylabel(r'$x(t)$', fontsize=12)
-    ax.legend(loc='upper right', frameon=False, fontsize=11)
+    ax.set_xlabel(r'$t$')
+    ax.set_ylabel(r'$x(t)$')
+    ax.legend(loc='upper right', frameon=False)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.tick_params(direction='in', which='both', left=True, bottom=True)
@@ -222,12 +222,12 @@ def train_loop(
     plt.close(fig)
 
     # Save loss history figure
-    fig_loss = plt.figure(figsize=(8, 5), dpi=150)
+    fig_loss = plt.figure(figsize=(6, 4), dpi=150)
     fig_loss.patch.set_facecolor('white')
     ax_loss = fig_loss.add_subplot(111)
     ax_loss.semilogy(loss_hist, linewidth=2, color='black')
-    ax_loss.set_xlabel(r'Batch', fontsize=12)
-    ax_loss.set_ylabel(r'Loss', fontsize=12)
+    ax_loss.set_xlabel(r'Batch')
+    ax_loss.set_ylabel(r'Loss')
     ax_loss.spines['top'].set_visible(False)
     ax_loss.spines['right'].set_visible(False)
     ax_loss.tick_params(direction='in', which='both', left=True, bottom=True)

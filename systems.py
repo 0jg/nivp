@@ -28,7 +28,8 @@ class DynamicalSystem(ABC):
         """Compute acceleration given position.
         
         Args:
-            position: Tensor of shape (dim,) representing position vector
+            position: Tensor whose trailing dimension equals `dim`
+                (e.g., shape (dim,) or (..., dim))
             
         Returns:
             Tensor of shape (dim,) with acceleration components
@@ -144,10 +145,11 @@ class HenonHeiles(DynamicalSystem):
 
         Returns: d^2x/dt^2 = -dV/dx, d^2y/dt^2 = -dV/dy
         """
-        x, y = position[0], position[1]
+        x = position[..., 0]
+        y = position[..., 1]
         ax = -x - 2.0 * x * y
         ay = -y - x**2 + y**2
-        return torch.stack([ax, ay])
+        return torch.stack([ax, ay], dim=-1)
     
     def lagrangian(
         self,

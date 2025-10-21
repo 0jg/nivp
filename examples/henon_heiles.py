@@ -33,9 +33,9 @@ def _():
         DATA_TYPE,
         SimpleMLP,
         CoupledOptimiser,
-        gradient,
         expected_path_tensor,
         ensure_run_dirs,
+        second_order_dynamics,
     )
     from systems import HenonHeiles
     return (
@@ -43,9 +43,9 @@ def _():
         DATA_TYPE,
         HenonHeiles,
         SimpleMLP,
+        second_order_dynamics,
         ensure_run_dirs,
         expected_path_tensor,
-        gradient,
         json,
         os,
     )
@@ -109,27 +109,29 @@ def dataset(DATA_TYPE, HenonHeiles, expected_path_tensor, params, torch):
     t_dataset = torch.utils.data.TensorDataset(t)
     domain = torch.utils.data.DataLoader(dataset=t_dataset, batch_size=params["batch_size"], shuffle=True)
 
-    init_x0 = torch.tensor([params["x0"], params["y0"]], dtype=DATA_TYPE)
-    v0 = torch.tensor([params["vx0"], params["vy0"]], dtype=DATA_TYPE)
+    init_position = torch.tensor([params["x0"], params["y0"]], dtype=DATA_TYPE)
+    init_velocity = torch.tensor([params["vx0"], params["vy0"]], dtype=DATA_TYPE)
 
     system = HenonHeiles()
-    expected = expected_path_tensor(system, init_x0, v0, T_MIN, T_MAX, DT)
-    return domain, expected, t
+    expected = expected_path_tensor(system, init_position, init_velocity, T_MIN, T_MAX, DT)
+    return domain, expected, t, system, init_position, init_velocity
 
 
 @app.cell
 def train_loop(
     CoupledOptimiser,
-    DATA_TYPE,
     SimpleMLP,
     domain,
     ensure_run_dirs,
     expected,
-    gradient,
+    init_position,
+    init_velocity,
     json,
     os,
     params,
     plt,
+    second_order_dynamics,
+    system,
     t,
     torch,
     tqdm,
@@ -145,37 +147,28 @@ def train_loop(
         EPOCHS = params["epochs"]
         loss_hist = []
         for epoch in tqdm(range(EPOCHS)):
-            domain_list = list(domain)
-            for t_batch_tuple in domain_list:
-                t_batch = t_batch_tuple[0]
+            for (t_batch,) in domain:
                 px = model_x(t_batch).requires_grad_(True)
                 py = model_y(t_batch).requires_grad_(True)
-
-                vx = gradient(px, t_batch, 1)
-                vy = gradient(py, t_batch, 1)
-
-                # Use generic system interface for dynamics
-                # ode_x and ode_y are residuals: d²x/dt² + ax, d²y/dt² + ay
-                ode_x = gradient(px, t_batch, 2) + px + 2*px*py
-                ode_y = gradient(py, t_batch, 2) + py + px**2 - py**2
+                positions = torch.cat([px, py], dim=2)
+                velocities, _, residuals = second_order_dynamics(system, positions, t_batch)
+                target_pos = init_position.to(positions).unsqueeze(0)
+                target_vel = init_velocity.to(positions).unsqueeze(0)
 
                 l2 = torch.nn.MSELoss()
-                pos_x = l2(torch.tensor(params["x0"], dtype=DATA_TYPE).unsqueeze(0), px[:,0,:])
-                pos_y = l2(torch.tensor(params["y0"], dtype=DATA_TYPE).unsqueeze(0), py[:,0,:])
-                vel_x = l2(torch.tensor(params["vx0"], dtype=DATA_TYPE).unsqueeze(0).unsqueeze(0), vx[0][0].unsqueeze(0))
-                vel_y = l2(torch.tensor(params["vy0"], dtype=DATA_TYPE).unsqueeze(0).unsqueeze(0), vy[0][0].unsqueeze(0))
+                pos_loss = l2(positions[:, 0, :], target_pos)
+                vel_loss = l2(velocities[:, 0, :], target_vel)
+                ode_loss = l2(residuals, torch.zeros_like(residuals))
 
-                ode_loss_x = l2(ode_x, torch.zeros_like(px))
-                ode_loss_y = l2(ode_y, torch.zeros_like(py))
-
-                overall_x = params["ODE_REGULARISER"]*ode_loss_x + params["POSITION_REGULARISER"]*pos_x + params["VELOCITY_REGULARISER"]*vel_x
-                overall_y = params["ODE_REGULARISER"]*ode_loss_y + params["POSITION_REGULARISER"]*pos_y + params["VELOCITY_REGULARISER"]*vel_y
-                overall = overall_x + overall_y
-                loss_hist.append(float(overall.detach().cpu().numpy()))
+                overall = (
+                    params["ODE_REGULARISER"] * ode_loss
+                    + params["POSITION_REGULARISER"] * pos_loss
+                    + params["VELOCITY_REGULARISER"] * vel_loss
+                )
+                loss_hist.append(overall.item())
 
                 optimiser.zero_grad()
-                overall_x.backward(retain_graph=True)
-                overall_y.backward()
+                overall.backward()
                 optimiser.step()
 
             if (epoch % 500 == 0) or (epoch == EPOCHS-1):
@@ -190,10 +183,10 @@ def train_loop(
                 ax_legend.axis('off')
 
                 tt = t[0,:,0].detach().cpu().numpy()
-                px_np = px.detach().cpu().numpy()[0,:,0]
-                py_np = py.detach().cpu().numpy()[0,:,0]
-                expected_x = expected.detach().cpu().numpy()[0,0,0,:]
-                expected_y = expected.detach().cpu().numpy()[0,1,0,:]
+                px_np = positions.detach().cpu().numpy()[0,:,0]
+                py_np = positions.detach().cpu().numpy()[0,:,1]
+                expected_x = expected.detach().cpu().numpy()[0,:,0]
+                expected_y = expected.detach().cpu().numpy()[0,:,1]
 
                 # Create dummy lines for legend
                 line_pinn, = ax_legend.plot([], [], color='black', linewidth=2, label='Neural IVP')
@@ -259,9 +252,9 @@ def train_loop(
                 ax_loss.tick_params(labelbottom=True, labelleft=True)
                 plt.show()
 
-        return model_x, model_y, loss_hist, px, py
+        return model_x, model_y, loss_hist, positions
 
-    model_x, model_y, loss_hist, px_final, py_final = train()
+    model_x, model_y, loss_hist, positions_final = train()
 
     # Save results to examples/outputs
     output_base = os.path.join(os.path.dirname(__file__), "outputs")
@@ -279,10 +272,10 @@ def train_loop(
 
     # Generate and save final figures
     tt = t[0,:,0].detach().cpu().numpy()
-    px_np = px_final.detach().cpu().numpy()[0,:,0]
-    py_np = py_final.detach().cpu().numpy()[0,:,0]
-    expected_x = expected.detach().cpu().numpy()[0,0,0,:]
-    expected_y = expected.detach().cpu().numpy()[0,1,0,:]
+    px_np = positions_final.detach().cpu().numpy()[0,:,0]
+    py_np = positions_final.detach().cpu().numpy()[0,:,1]
+    expected_x = expected.detach().cpu().numpy()[0,:,0]
+    expected_y = expected.detach().cpu().numpy()[0,:,1]
 
     # Save trajectories figure
     fig = plt.figure(figsize=(12, 5), dpi=150)

@@ -126,15 +126,15 @@ def expected_path_tensor(
         dt: Time step
         
     Returns:
-        Solution tensor reshaped to (1, dim, 1, T) for batch processing
+        Solution tensor reshaped to (1, T, dim) for batch processing
     """
     t: torch.Tensor
     A: torch.Tensor
     A_t: torch.Tensor
     t, A, A_t = rk4_integrate(system, x0, v0, t_min, t_max, dt)
-    # Reshape to (1, dim, 1, T) for compatibility with batch predictions
-    solution: torch.Tensor = A.unsqueeze(0).unsqueeze(2)
-    return solution.requires_grad_(True)
+    # Reshape to (1, T, dim) for compatibility with batch predictions
+    solution: torch.Tensor = A.transpose(0, 1).unsqueeze(0)
+    return solution
 
 
 
@@ -198,6 +198,49 @@ class CoupledOptimiser:
         """Perform optimisation step in all optimisers."""
         for op in self.optimisers:
             op.step()
+
+
+def second_order_dynamics(
+    system: Any,
+    positions: torch.Tensor,
+    t: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Compute velocities, model accelerations, and residuals for q'' = a(q).
+    
+    Args:
+        system: DynamicalSystem with acceleration() method
+        positions: Predicted positions q(t) with trailing dimension equal to system.dim
+        t: Input time tensor matching positions except for the last dimension
+    
+    Returns:
+        Tuple of tensors (velocities, model_accelerations, residuals), each shaped like positions.
+        Residuals follow d²q/dt² - system.acceleration(q).
+    """
+    if positions.shape[-1] != system.dim:
+        raise ValueError(
+            f"Expected positions last dimension {system.dim}, got {positions.shape[-1]}"
+        )
+    if positions.shape[:-1] != t.shape[:-1]:
+        raise ValueError("positions and t must share the same leading dimensions.")
+
+    system_accel: torch.Tensor = system.acceleration(positions)
+    velocities: list[torch.Tensor] = []
+    model_accels: list[torch.Tensor] = []
+    residuals: list[torch.Tensor] = []
+
+    for idx in range(system.dim):
+        coord: torch.Tensor = positions[..., idx:idx+1]
+        vel: torch.Tensor = gradient(coord, t, 1)
+        acc_model: torch.Tensor = gradient(coord, t, 2)
+        velocities.append(vel)
+        model_accels.append(acc_model)
+        residuals.append(acc_model - system_accel[..., idx:idx+1])
+
+    return (
+        torch.cat(velocities, dim=-1),
+        torch.cat(model_accels, dim=-1),
+        torch.cat(residuals, dim=-1),
+    )
 
 
 # ---------- Activations & model ----------
@@ -309,4 +352,3 @@ class SimpleMLP(nn.Module):
         x = self._act(self.L3(x))
         x = self.L4(x)
         return x
-
