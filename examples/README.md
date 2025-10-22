@@ -30,7 +30,7 @@ uv run marimo run henon_heiles.py
 
 ## Output Structure
 
-Results are automatically organized in `./outputs/`:
+Results are automatically organised in `./outputs/`:
 
 ```text
 outputs/

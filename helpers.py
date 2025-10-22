@@ -28,10 +28,7 @@ def ensure_run_dirs(
     params: Dict[str, Any], 
     system_name: str
 ) -> Dict[str, str]:
-    """Create run-specific directories with parameter hashing.
-    
-    Generates a unique directory structure for each run based on hashed parameters,
-    allowing automatic caching and organization of model outputs.
+    """Create run-specific directories with a hash of the params dictionary.
     
     Args:
         base: Base output directory path
@@ -214,7 +211,7 @@ def second_order_dynamics(
     
     Returns:
         Tuple of tensors (velocities, model_accelerations, residuals), each shaped like positions.
-        Residuals follow d²q/dt² - system.acceleration(q).
+        Residuals follow d^2q/dt^2 - system.acceleration(q).
     """
     if positions.shape[-1] != system.dim:
         raise ValueError(
