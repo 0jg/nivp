@@ -379,7 +379,7 @@ def train_loop(
 
     # Save results to examples/outputs
     output_base = os.path.join(os.path.dirname(__file__), "outputs")
-    paths = ensure_run_dirs(output_base, params, system_name="landau_lifschitz")
+    paths = ensure_run_dirs(output_base, params, system_name="landau_lifshitz")
 
     # Save models
     mx_path = os.path.join(paths["models"], f'{params["JOB_ID"]}_mx.pth')
