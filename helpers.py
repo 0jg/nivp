@@ -104,6 +104,44 @@ def rk4_integrate(
     return t, A, A_t
 
 
+def rk4_integrate_first_order(
+    system: Any,  # FirstOrderSystem
+    M0: torch.Tensor,
+    t_min: float,
+    t_max: float,
+    dt: float,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Integrate a first-order ODE system using RK4.
+
+    Solves dM/dt = F(M) with initial condition M(t_min) = M0.
+
+    Args:
+        system: FirstOrderSystem instance with time_derivative() method
+        M0: Initial state, shape (dim,)
+        t_min: Start time
+        t_max: End time
+        dt: Time step
+        
+    Returns:
+        Tuple of (t, state) where state has shape (dim, T)
+    """
+    dim: int = system.dim
+    T: int = int(round((t_max - t_min) / dt)) + 1
+    t: torch.Tensor = torch.linspace(t_min, t_max, T, dtype=DATA_TYPE, device=DEVICE)
+    M: torch.Tensor = torch.zeros((dim, T), dtype=DATA_TYPE, device=DEVICE)
+    M[:, 0] = M0.to(DEVICE)
+
+    for i in range(0, T - 1):
+        k1: torch.Tensor = dt * system.time_derivative(M[:, i])
+        k2: torch.Tensor = dt * system.time_derivative(M[:, i] + 0.5 * k1)
+        k3: torch.Tensor = dt * system.time_derivative(M[:, i] + 0.5 * k2)
+        k4: torch.Tensor = dt * system.time_derivative(M[:, i] + k3)
+
+        M[:, i+1] = M[:, i] + (k1 + 2*k2 + 2*k3 + k4) / 6.0
+
+    return t, M
+
+
 def expected_path_tensor(
     system: Any,  # DynamicalSystem
     x0: torch.Tensor,
@@ -131,6 +169,33 @@ def expected_path_tensor(
     t, A, A_t = rk4_integrate(system, x0, v0, t_min, t_max, dt)
     # Reshape to (1, T, dim) for compatibility with batch predictions
     solution: torch.Tensor = A.transpose(0, 1).unsqueeze(0)
+    return solution
+
+
+def expected_path_tensor_first_order(
+    system: Any,  # FirstOrderSystem
+    M0: torch.Tensor,
+    t_min: float,
+    t_max: float,
+    dt: float,
+) -> torch.Tensor:
+    """Compute ground-truth solution via RK4 integration for first-order systems.
+    
+    Args:
+        system: FirstOrderSystem instance
+        M0: Initial state
+        t_min: Start time
+        t_max: End time
+        dt: Time step
+        
+    Returns:
+        Solution tensor reshaped to (1, T, dim) for batch processing
+    """
+    t: torch.Tensor
+    M: torch.Tensor
+    t, M = rk4_integrate_first_order(system, M0, t_min, t_max, dt)
+    # Reshape to (1, T, dim) for compatibility with batch predictions
+    solution: torch.Tensor = M.transpose(0, 1).unsqueeze(0)
     return solution
 
 
@@ -236,6 +301,45 @@ def second_order_dynamics(
     return (
         torch.cat(velocities, dim=-1),
         torch.cat(model_accels, dim=-1),
+        torch.cat(residuals, dim=-1),
+    )
+
+
+def first_order_dynamics(
+    system: Any,
+    state: torch.Tensor,
+    t: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Compute model time derivatives and residuals for dM/dt = F(M).
+    
+    Args:
+        system: FirstOrderSystem with time_derivative() method
+        state: Predicted state M(t) with trailing dimension equal to system.dim
+        t: Input time tensor matching state except for the last dimension
+    
+    Returns:
+        Tuple of tensors (model_derivatives, residuals), each shaped like state.
+        Residuals follow dM/dt - system.time_derivative(M).
+    """
+    if state.shape[-1] != system.dim:
+        raise ValueError(
+            f"Expected state last dimension {system.dim}, got {state.shape[-1]}"
+        )
+    if state.shape[:-1] != t.shape[:-1]:
+        raise ValueError("state and t must share the same leading dimensions.")
+
+    system_deriv: torch.Tensor = system.time_derivative(state)
+    model_derivs: list[torch.Tensor] = []
+    residuals: list[torch.Tensor] = []
+
+    for idx in range(system.dim):
+        component: torch.Tensor = state[..., idx:idx+1]
+        deriv_model: torch.Tensor = gradient(component, t, 1)
+        model_derivs.append(deriv_model)
+        residuals.append(deriv_model - system_deriv[..., idx:idx+1])
+
+    return (
+        torch.cat(model_derivs, dim=-1),
         torch.cat(residuals, dim=-1),
     )
 
