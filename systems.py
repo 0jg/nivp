@@ -182,3 +182,85 @@ class HenonHeiles(DynamicalSystem):
         kinetic_energy = 0.5 * (dq1**2 + dq2**2)
         potential_energy = 0.5 * (q1**2 + q2**2) + q1**2 * q2 - q2**3 / 3.0
         return kinetic_energy + potential_energy
+
+
+class FirstOrderSystem(ABC):
+    """Abstract base class for first-order dynamical systems.
+    
+    A first-order system is defined by:
+    - State dimension
+    - Time derivative function dM/dt = F(M, t)
+    """
+    
+    @property
+    @abstractmethod
+    def dim(self) -> int:
+        """Dimension of the state vector."""
+        pass
+    
+    @abstractmethod
+    def time_derivative(self, state: torch.Tensor) -> torch.Tensor:
+        """Compute time derivative dM/dt given current state.
+        
+        Args:
+            state: Tensor whose trailing dimension equals `dim`
+                (e.g., shape (dim,) or (..., dim))
+            
+        Returns:
+            Tensor of shape (..., dim) with time derivatives
+        """
+        pass
+
+
+class LandauLifschitz(FirstOrderSystem):
+    """The Landau-Lifschitz equation for magnetisation dynamics.
+    
+    In dimensionless form:
+    dM/dt = -M x H - alpha M x (M x H)
+    
+    where M is the dimensionless magnetisation vector, H is the applied field, and α is the damping parameter.
+    
+    For H = H0 e_z (field along z-axis) and initial condition M(0) = e_x, this describes precession and damping of the magnetisation vector.
+    """
+    
+    def __init__(self, alpha: float = 0.1, H0: float = 1.0):
+        """Initialise Landau-Lifschitz system.
+        
+        Args:
+            alpha: damping parameter (dimensionless)
+            H0: Applied field strength in z-direction (dimensionless)
+        """
+        self.alpha = alpha
+        self.H0 = H0
+    
+    @property
+    def dim(self) -> int:
+        return 3
+    
+    def time_derivative(self, M: torch.Tensor) -> torch.Tensor:
+        """Compute dM/dt for the LL equation.
+
+        dM/dt = -M x H - alpha M x (M x H)
+
+        where H = H0 e_z
+        
+        Args:
+            M: Magnetisation vector, shape (..., 3)
+            
+        Returns:
+            Time derivative dM/dt, shape (..., 3)
+        """
+        # H = H0 * ẑ = (0, 0, H0)
+        H = torch.zeros_like(M)
+        H[..., 2] = self.H0
+        
+        # Compute M x H using PyTorch's cross product
+        M_cross_H = torch.cross(M, H, dim=-1)
+        
+        # Compute M x (M x H)
+        M_cross_MH = torch.cross(M, M_cross_H, dim=-1)
+
+        # dM/dt = -M x H - alpha M x (M x H)
+        dM_dt = -M_cross_H - self.alpha * M_cross_MH
+        
+        return dM_dt

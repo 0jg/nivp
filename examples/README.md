@@ -4,6 +4,18 @@ This directory contains example applications of the neural IVP solver to various
 
 ## Available Examples
 
+### `harmonic_oscillator.py`
+
+The simplest example: a 1D harmonic oscillator with equation d²x/dt² = -x.
+
+With initial conditions x(0) = 0, v(0) = 1, the analytical solution is x(t) = sin(t).
+
+**To run:**
+
+```bash
+uv run marimo edit harmonic_oscillator.py
+```
+
 ### `henon_heiles.py`
 
 Describes the motion of a star about its galactic centre, akin to a 3-body problem.
@@ -26,6 +38,32 @@ Or batch run:
 
 ```bash
 uv run marimo run henon_heiles.py
+```
+
+### `landau_lifschitz.py`
+
+Models magnetization dynamics in ferromagnetic materials using the Landau-Lifschitz equation.
+
+This is a **first-order** system (unlike the above second-order systems) with equation:
+
+**dM/dt = -M × H - α M × (M × H)**
+
+where:
+- M is the dimensionless magnetization vector (mx, my, mz)
+- H = H₀ẑ is the applied magnetic field along the z-axis
+- α is the Gilbert damping parameter
+
+With initial condition M(0) = x̂, the magnetization precesses around the z-axis while damping toward equilibrium.
+
+Features:
+- Three separate neural networks for mx, my, mz components
+- 3D phase space visualization
+- Comparison with RK4 ground truth
+
+**To run:**
+
+```bash
+uv run marimo edit landau_lifschitz.py
 ```
 
 ## Output Structure
