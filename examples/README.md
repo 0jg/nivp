@@ -6,7 +6,7 @@ This directory contains example applications of the neural IVP solver to various
 
 ### `harmonic_oscillator.py`
 
-The simplest example: a 1D harmonic oscillator with equation d²x/dt² = -x.
+The simplest example: a 1D harmonic oscillator with equation d^2x/dt^2 = -x.
 
 With initial conditions x(0) = 0, v(0) = 1, the analytical solution is x(t) = sin(t).
 
@@ -46,14 +46,14 @@ Models magnetization dynamics in ferromagnetic materials using the Landau-Lifsch
 
 This is a **first-order** system (unlike the above second-order systems) with equation:
 
-**dM/dt = -M × H - α M × (M × H)**
+**dM/dt = -M x H - alpha M x (M x H)**
 
 where:
-- M is the dimensionless magnetization vector (mx, my, mz)
-- H = H₀ẑ is the applied magnetic field along the z-axis
-- α is the Gilbert damping parameter
+- M is the dimensionless magnetisation vector (mx, my, mz)
+- H = H_0 e_z is the applied magnetic field along the z-axis
+- alpha is the damping parameter
 
-With initial condition M(0) = x̂, the magnetization precesses around the z-axis while damping toward equilibrium.
+With initial condition M(0) = e_x, the magnetisation precesses around the z-axis while damping toward equilibrium.
 
 Features:
 - Three separate neural networks for mx, my, mz components
