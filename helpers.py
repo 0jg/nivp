@@ -4,7 +4,7 @@ Helper utilities for neural IVP solving.
 Provides:
 - Filesystem management (directory structure, run caching)
 - Numerical integration (RK4 for ground truth solutions)
-- Torch utilities (derivatives, coupled optimisers)
+- Torch utilities (derivatives, dynamics residuals)
 - Neural network architectures with custom activations
 """
 
@@ -15,12 +15,26 @@ import json
 import math
 import hashlib
 import torch
-from typing import Tuple, Dict, Any
+from typing import Protocol, Tuple, Dict
 import torch.nn as nn
 import torch.nn.functional as F
 
 DATA_TYPE: torch.dtype = torch.float
 DEVICE: torch.device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+
+
+class SecondOrderSystem(Protocol):
+    dim: int
+
+    def acceleration(self, position: torch.Tensor) -> torch.Tensor:
+        ...
+
+
+class FirstOrderSystem(Protocol):
+    dim: int
+
+    def time_derivative(self, state: torch.Tensor) -> torch.Tensor:
+        ...
 
 # ---------- Filesystem helpers ----------
 def ensure_run_dirs(
@@ -55,7 +69,7 @@ def ensure_run_dirs(
 
 # ---------- Physics helpers ----------
 def rk4_integrate(
-    system: Any,  # DynamicalSystem
+    system: SecondOrderSystem,
     x0: torch.Tensor,
     v0: torch.Tensor,
     t_min: float,
@@ -67,7 +81,7 @@ def rk4_integrate(
     Solves d^2x/dt^2 = a(x) with initial conditions x(t_min) = x0, dx/dt(t_min) = v0.
 
     Args:
-        system: DynamicalSystem instance with acceleration() method
+        system: Object with `dim` and `acceleration()`
         x0: Initial position, shape (dim,)
         v0: Initial velocity, shape (dim,)
         t_min: Start time
@@ -105,7 +119,7 @@ def rk4_integrate(
 
 
 def rk4_integrate_first_order(
-    system: Any,  # FirstOrderSystem
+    system: FirstOrderSystem,
     M0: torch.Tensor,
     t_min: float,
     t_max: float,
@@ -116,7 +130,7 @@ def rk4_integrate_first_order(
     Solves dM/dt = F(M) with initial condition M(t_min) = M0.
 
     Args:
-        system: FirstOrderSystem instance with time_derivative() method
+        system: Object with `dim` and `time_derivative()`
         M0: Initial state, shape (dim,)
         t_min: Start time
         t_max: End time
@@ -143,7 +157,7 @@ def rk4_integrate_first_order(
 
 
 def expected_path_tensor(
-    system: Any,  # DynamicalSystem
+    system: SecondOrderSystem,
     x0: torch.Tensor,
     v0: torch.Tensor,
     t_min: float,
@@ -153,7 +167,7 @@ def expected_path_tensor(
     """Compute ground-truth solution via RK4 integration.
     
     Args:
-        system: DynamicalSystem instance
+        system: Object with `dim` and `acceleration()`
         x0: Initial position
         v0: Initial velocity  
         t_min: Start time
@@ -173,7 +187,7 @@ def expected_path_tensor(
 
 
 def expected_path_tensor_first_order(
-    system: Any,  # FirstOrderSystem
+    system: FirstOrderSystem,
     M0: torch.Tensor,
     t_min: float,
     t_max: float,
@@ -182,7 +196,7 @@ def expected_path_tensor_first_order(
     """Compute ground-truth solution via RK4 integration for first-order systems.
     
     Args:
-        system: FirstOrderSystem instance
+        system: Object with `dim` and `time_derivative()`
         M0: Initial state
         t_min: Start time
         t_max: End time
@@ -237,40 +251,15 @@ def gradient(
         raise NotImplementedError("Only 1st and 2nd derivatives supported.")
 
 
-class CoupledOptimiser:
-    """Manager for multiple optimisers to be stepped together.
-    
-    Useful when training coupled networks (e.g., separate networks for each coordinate).
-    """
-    
-    def __init__(self, *optimisers: torch.optim.Optimizer) -> None:
-        """Initialise with one or more optimisers.
-        
-        Args:
-            *optimisers: Variable number of torch.optim.Optimizer instances
-        """
-        self.optimisers: Tuple[torch.optim.Optimizer, ...] = optimisers
-
-    def zero_grad(self) -> None:
-        """Zero gradients in all optimisers."""
-        for op in self.optimisers:
-            op.zero_grad()
-
-    def step(self) -> None:
-        """Perform optimisation step in all optimisers."""
-        for op in self.optimisers:
-            op.step()
-
-
 def second_order_dynamics(
-    system: Any,
+    system: SecondOrderSystem,
     positions: torch.Tensor,
     t: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute velocities, model accelerations, and residuals for q'' = a(q).
     
     Args:
-        system: DynamicalSystem with acceleration() method
+        system: Object with `dim` and `acceleration()`
         positions: Predicted positions q(t) with trailing dimension equal to system.dim
         t: Input time tensor matching positions except for the last dimension
     
@@ -306,14 +295,14 @@ def second_order_dynamics(
 
 
 def first_order_dynamics(
-    system: Any,
+    system: FirstOrderSystem,
     state: torch.Tensor,
     t: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Compute model time derivatives and residuals for dM/dt = F(M).
     
     Args:
-        system: FirstOrderSystem with time_derivative() method
+        system: Object with `dim` and `time_derivative()`
         state: Predicted state M(t) with trailing dimension equal to system.dim
         t: Input time tensor matching state except for the last dimension
     

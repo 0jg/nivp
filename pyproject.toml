@@ -5,7 +5,7 @@ description = "Implementation of the neural IVP, as introduced in PhysRevE.111.0
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "marimo>=0.17.0",
+    "ipykernel>=7.2.0",
     "matplotlib>=3.10.7",
     "numpy>=2.3.4",
     "torch>=2.9.0",

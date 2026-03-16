@@ -4,19 +4,13 @@ This directory contains example applications of the neural IVP solver to various
 
 ## Available Examples
 
-### `harmonic_oscillator.py`
+### `harmonic_oscillator.ipynb`
 
 The simplest example: a 1D harmonic oscillator with equation d^2x/dt^2 = -x.
 
 With initial conditions x(0) = 0, v(0) = 1, the analytical solution is x(t) = sin(t).
 
-**To run:**
-
-```bash
-uv run marimo edit harmonic_oscillator.py
-```
-
-### `henon_heiles.py`
+### `henon_heiles.ipynb`
 
 Describes the motion of a star about its galactic centre, akin to a 3-body problem.
 
@@ -28,27 +22,16 @@ The example includes:
 - Real-time visualization during training
 - Results saved to `./outputs/`
 
-**To run:**
-
-```bash
-uv run marimo edit henon_heiles.py
-```
-
-Or batch run:
-
-```bash
-uv run marimo run henon_heiles.py
-```
-
 ### `landau_lifschitz.py`
 
-Models magnetization dynamics in ferromagnetic materials using the Landau-Lifschitz equation.
+Models magnetisation dynamics in ferromagnetic materials using the Landau-Lifschitz equation.
 
 This is a **first-order** system (unlike the above second-order systems) with equation:
 
-**dM/dt = -M x H - alpha M x (M x H)**
+`dM/dt = -M x H - alpha M x (M x H)`
 
 where:
+
 - M is the dimensionless magnetisation vector (mx, my, mz)
 - H = H_0 e_z is the applied magnetic field along the z-axis
 - alpha is the damping parameter
@@ -56,15 +39,10 @@ where:
 With initial condition M(0) = e_x, the magnetisation precesses around the z-axis while damping toward equilibrium.
 
 Features:
+
 - Three separate neural networks for mx, my, mz components
 - 3D phase space visualization
 - Comparison with RK4 ground truth
-
-**To run:**
-
-```bash
-uv run marimo edit landau_lifschitz.py
-```
 
 ## Output Structure
 
@@ -85,15 +63,20 @@ Subdirectories are named with the system name and a parameter hash to identify u
 
 To add a new dynamical system:
 
-1. Define the system in `../systems.py` by subclassing `DynamicalSystem`
+1. Define the system directly in the example file that uses it
 2. Create a new notebook in this directory
-3. Import the system and use it with the generic helpers
+3. Reuse the generic helpers from `../helpers.py` for RK4 references and residual calculations
 
 Example template:
 
 ```python
-from systems import MyNewSystem
 from helpers import rk4_integrate, expected_path_tensor
+
+class MyNewSystem:
+    dim = 1
+
+    def acceleration(self, position):
+        return -position
 
 system = MyNewSystem()
 x0 = torch.tensor([...])
@@ -101,3 +84,4 @@ v0 = torch.tensor([...])
 expected = expected_path_tensor(system, x0, v0, t_min, t_max, dt)
 ```
 
+Keep system-specific physics definitions in the example that uses them.
