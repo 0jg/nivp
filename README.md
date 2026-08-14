@@ -16,3 +16,7 @@ uv run marimo run examples/harmonic_oscillator.py # or henon_heiles.py
 ```
 
 Artifacts are written under `./examples/outputs/figures|paths|models/<system_name>/<run_name>/`.
+
+## Tutorial
+
+A minimal implementation which does not depend on the library is available in `/tutorial/`. The tutorial is available as a skeleton code (with implementation guidance) and as a final solution.
